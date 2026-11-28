@@ -945,3 +945,250 @@ img {
     flex-direction: row;
   }
 }
+
+/* SHOPPING CART */
+
+.cart-button {
+  position: relative;
+}
+
+.cart-count {
+  position: absolute;
+  top: -9px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--lavender);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.cart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(35, 25, 40, 0.45);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cart-panel {
+  width: 100%;
+  max-width: 480px;
+  height: 100%;
+  overflow-y: auto;
+  background: white;
+  padding: 30px;
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.1);
+}
+
+.cart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cart-header h2 {
+  color: var(--purple);
+  font-family: var(--font-heading);
+  font-size: 25px;
+}
+
+.cart-close {
+  border: none;
+  background: transparent;
+  color: var(--purple);
+}
+
+.cart-empty {
+  padding: 50px 10px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.cart-item {
+  display: flex;
+  gap: 15px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cart-item img {
+  width: 85px;
+  height: 95px;
+  object-fit: cover;
+  background: var(--soft);
+}
+
+.cart-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cart-item-info h3 {
+  color: var(--purple);
+  font-family: var(--font-heading);
+  font-size: 16px;
+}
+
+.cart-item-info p {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cart-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.quantity-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.quantity-control button,
+.remove-cart-item {
+  border: none;
+  background: transparent;
+  color: var(--purple);
+}
+
+.remove-cart-item {
+  margin-left: auto;
+  color: #b83250;
+}
+
+.cart-total {
+  display: flex;
+  justify-content: space-between;
+  margin: 25px 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  color: var(--purple);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.checkout-button,
+.add-cart-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 13px 18px;
+  border: none;
+  background: var(--purple);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.2s ease;
+}
+
+.checkout-button:hover,
+.add-cart-button:hover {
+  background: var(--lavender);
+}
+
+.checkout-button:disabled,
+.add-cart-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.add-cart-button {
+  margin-top: 12px;
+}
+
+.checkout-form {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 25px;
+}
+
+.checkout-form h3 {
+  color: var(--purple);
+  font-family: var(--font-heading);
+  font-size: 21px;
+}
+
+.checkout-form label {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.checkout-form input,
+.checkout-form textarea,
+.checkout-form select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  outline: none;
+  background: white;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.checkout-form input:focus,
+.checkout-form textarea:focus,
+.checkout-form select:focus {
+  border-color: var(--lavender);
+}
+
+.fulfillment-options {
+  display: flex;
+  gap: 12px;
+}
+
+.fulfillment-options label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.fulfillment-options input {
+  width: auto;
+}
+
+.order-message {
+  margin-top: 15px;
+  padding: 12px;
+  background: var(--soft);
+  color: var(--purple);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.order-error {
+  color: #b83250;
+}
+
+@media (max-width: 500px) {
+  .cart-panel {
+    padding: 22px 18px;
+  }
+
+  .fulfillment-options {
+    flex-direction: column;
+  }
+}

@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 interface Product {
@@ -14,6 +15,39 @@ interface Product {
   category: string;
   imageUrl: string | null;
   stock: number;
+}
+
+type OrderStatus =
+  | "PENDING"
+  | "CONFIRMED"
+  | "PROCESSING"
+  | "READY_FOR_PICKUP"
+  | "OUT_FOR_DELIVERY"
+  | "COMPLETED"
+  | "CANCELLED";
+
+type FulfillmentMethod = "DELIVERY" | "PICKUP";
+
+interface OrderItem {
+  id: number;
+  productId: number;
+  productName: string;
+  unitPrice: string | number;
+  quantity: number;
+}
+
+interface Order {
+  id: number;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string | null;
+  fulfillmentMethod: FulfillmentMethod;
+  deliveryAddress: string | null;
+  customerNote: string | null;
+  total: string | number;
+  status: OrderStatus;
+  createdAt: string;
+  items: OrderItem[];
 }
 
 const API_URL = "http://localhost:3001/products";
@@ -40,6 +74,8 @@ const buttonStyle = {
 };
 
 export default function AdminPage() {
+  const router = useRouter();
+
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -47,7 +83,7 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editSaving, setEditSaving] = useState(false);
-
+  const [loggingOut, setLoggingOut] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
     description: "",
@@ -68,6 +104,125 @@ export default function AdminPage() {
   const [newImagePreview, setNewImagePreview] = useState("");
   const [stock, setStock] = useState("0");
 
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
+  const [ordersMessage, setOrdersMessage] = useState("");
+  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+
+
+  // Load orders from the protected backend endpoint
+  async function fetchOrders() {
+    setOrdersLoading(true);
+    setOrdersError("");
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/orders`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      if (response.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Failed to load orders.");
+      }
+
+      const data: Order[] = await response.json();
+      setOrders(data);
+    } catch {
+      setOrdersError("Unable to load orders. Please try again.");
+    } finally {
+      setOrdersLoading(false);
+    }
+  }
+
+  // Return only the status transitions permitted by the backend
+  function getAvailableOrderStatuses(order: Order): OrderStatus[] {
+    switch (order.status) {
+      case "PENDING":
+        return ["CONFIRMED", "CANCELLED"];
+
+      case "CONFIRMED":
+        return ["PROCESSING", "CANCELLED"];
+
+      case "PROCESSING":
+        return order.fulfillmentMethod === "PICKUP"
+          ? ["READY_FOR_PICKUP", "CANCELLED"]
+          : ["OUT_FOR_DELIVERY", "CANCELLED"];
+
+      case "READY_FOR_PICKUP":
+      case "OUT_FOR_DELIVERY":
+        return ["COMPLETED", "CANCELLED"];
+
+      case "COMPLETED":
+      case "CANCELLED":
+        return [];
+
+      default:
+        return [];
+    }
+  }
+
+  // Update an order's status
+  async function updateOrderStatus(
+    orderId: number,
+    status: OrderStatus
+  ) {
+    setUpdatingOrderId(orderId);
+    setOrdersError("");
+    setOrdersMessage("");
+
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/orders/${orderId}/status`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ status }),
+        }
+      );
+
+      if (response.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          Array.isArray(errorData?.message)
+            ? errorData.message.join(" ")
+            : errorData?.message || "Failed to update order status."
+        );
+      }
+
+      const updatedOrder: Order = await response.json();
+
+      setOrders((currentOrders) =>
+        currentOrders.map((order) =>
+          order.id === orderId ? updatedOrder : order
+        )
+      );
+
+      setOrdersMessage(`Order #${orderId} status updated successfully.`);
+    } catch (error) {
+      setOrdersError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update order status."
+      );
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  }
+
   // Load products from the backend
   async function fetchProducts() {
     try {
@@ -78,6 +233,7 @@ export default function AdminPage() {
       }
 
       const data: Product[] = await response.json();
+
       setProducts(data);
       setError("");
     } catch {
@@ -87,24 +243,45 @@ export default function AdminPage() {
     }
   }
 
+  // Verify administrator session before loading the dashboard
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadProducts() {
+    async function verifyAndLoadProducts() {
       try {
-        const response = await fetch(API_URL, {
+        // First, verify the administrator session
+        const authResponse = await fetch(`${BACKEND_URL}/auth/me`, {
+          credentials: "include",
+          cache: "no-store",
           signal: controller.signal,
         });
 
-        if (!response.ok) {
+        if (authResponse.status === 401) {
+          router.replace("/admin/login");
+          return;
+        }
+
+        if (!authResponse.ok) {
+          throw new Error("Unable to verify administrator session.");
+        }
+
+        // Load products only after authentication succeeds
+        const productsResponse = await fetch(API_URL, {
+          signal: controller.signal,
+        });
+
+        if (!productsResponse.ok) {
           throw new Error("Failed to load products.");
         }
 
-        const data: Product[] = await response.json();
+        const data: Product[] = await productsResponse.json();
 
         if (!controller.signal.aborted) {
           setProducts(data);
           setError("");
+
+          // Load orders after successful administrator authentication
+          await fetchOrders();
         }
       } catch {
         if (!controller.signal.aborted) {
@@ -117,11 +294,31 @@ export default function AdminPage() {
       }
     }
 
-    loadProducts();
+    verifyAndLoadProducts();
 
     return () => controller.abort();
-  }, []);
+  }, [router]);
+  // Log out administrator
+async function handleLogout() {
+  setLoggingOut(true);
+  setMessage("");
 
+  try {
+    const response = await fetch(`${BACKEND_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error("Logout failed.");
+    }
+
+    router.replace("/admin/login");
+  } catch {
+    setMessage("Unable to log out. Please try again.");
+    setLoggingOut(false);
+  }
+}
   // Delete product
   async function deleteProduct(id: number) {
     const confirmed = window.confirm(
@@ -135,6 +332,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${API_URL}/${id}`, {
         method: "DELETE",
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -197,6 +395,7 @@ export default function AdminPage() {
     try {
       const response = await fetch(`${API_URL}/${editingId}`, {
         method: "PATCH",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -285,6 +484,7 @@ export default function AdminPage() {
       // 1. Create product
       const response = await fetch(API_URL, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -313,6 +513,7 @@ export default function AdminPage() {
           `${API_URL}/${createdProduct.id}/image`,
           {
             method: "POST",
+            credentials: "include",
             body: formData,
           }
         );
@@ -371,10 +572,247 @@ export default function AdminPage() {
           <p>Administration Dashboard</p>
         </div>
 
-        <Link href="/" style={{ color: "#68458c" }}>
-          View Customer Shop
-        </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+  <Link href="/" style={{ color: "#68458c" }}>
+    View Customer Shop
+  </Link>
+
+  <button
+    type="button"
+    onClick={handleLogout}
+    disabled={loggingOut}
+    style={{
+      ...buttonStyle,
+      marginTop: 0,
+      background: "#b83250",
+      opacity: loggingOut ? 0.6 : 1,
+    }}
+  >
+    {loggingOut ? "Logging out..." : "Logout"}
+  </button>
+</div>
       </header>
+
+
+      {/* ORDER MANAGEMENT */}
+      <section
+        style={{
+          background: "white",
+          padding: "25px",
+          borderRadius: "12px",
+          marginTop: "35px",
+          marginBottom: "40px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "12px",
+          }}
+        >
+          <h2 style={{ color: "#68458c", margin: 0 }}>Manage Orders</h2>
+
+          <button
+            type="button"
+            onClick={fetchOrders}
+            disabled={ordersLoading}
+            style={{
+              ...buttonStyle,
+              marginTop: 0,
+              opacity: ordersLoading ? 0.6 : 1,
+            }}
+          >
+            {ordersLoading ? "Refreshing..." : "Refresh Orders"}
+          </button>
+        </div>
+
+        {ordersError && (
+          <p style={{ color: "#b83250", marginTop: "20px" }}>
+            {ordersError}
+          </p>
+        )}
+
+        {ordersMessage && (
+          <p style={{ color: "#247a45", marginTop: "20px" }}>
+            {ordersMessage}
+          </p>
+        )}
+
+        {ordersLoading ? (
+          <p style={{ marginTop: "25px" }}>Loading orders...</p>
+        ) : orders.length === 0 ? (
+          <p style={{ marginTop: "25px", color: "#666" }}>
+            No customer orders yet.
+          </p>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gap: "20px",
+              marginTop: "25px",
+            }}
+          >
+            {orders.map((order) => (
+              <article
+                key={order.id}
+                style={{
+                  border: "1px solid #e5dfed",
+                  borderRadius: "10px",
+                  padding: "20px",
+                  background: "#fdfcff",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "12px",
+                  }}
+                >
+                  <h3 style={{ color: "#68458c", margin: 0 }}>
+                    Order #{order.id}
+                  </h3>
+
+                  <span
+                    style={{
+                      background: "#eee8f5",
+                      color: "#68458c",
+                      padding: "7px 12px",
+                      borderRadius: "20px",
+                      fontSize: "13px",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {order.status.replaceAll("_", " ")}
+                  </span>
+                </div>
+
+                <p style={{ color: "#777", fontSize: "13px" }}>
+                  {new Date(order.createdAt).toLocaleString()}
+                </p>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: "15px",
+                    marginTop: "20px",
+                  }}
+                >
+                  <div>
+                    <h4>Customer</h4>
+                    <p>{order.customerName}</p>
+                    <p>Phone: {order.customerPhone}</p>
+                    {order.customerEmail && (
+                      <p>Email: {order.customerEmail}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h4>Fulfillment</h4>
+                    <p>
+                      {order.fulfillmentMethod === "DELIVERY"
+                        ? "Home Delivery"
+                        : "Store Pickup"}
+                    </p>
+
+                    {order.deliveryAddress && (
+                      <p>Address: {order.deliveryAddress}</p>
+                    )}
+
+                    {order.customerNote && (
+                      <p>Customer note: {order.customerNote}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: "20px" }}>
+                  <h4>Ordered Products</h4>
+
+                  {order.items.map((item) => (
+                    <div
+                      key={item.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: "10px",
+                        padding: "10px 0",
+                        borderBottom: "1px solid #eee",
+                      }}
+                    >
+                      <span>
+                        {item.productName} × {item.quantity}
+                      </span>
+
+                      <span>
+                        {(Number(item.unitPrice) * item.quantity).toFixed(2)} TND
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "15px",
+                    marginTop: "20px",
+                  }}
+                >
+                  <strong style={{ color: "#68458c", fontSize: "18px" }}>
+                    Total: {Number(order.total).toFixed(2)} TND
+                  </strong>
+
+                  <select
+                    value=""
+                    disabled={
+                      updatingOrderId === order.id ||
+                      getAvailableOrderStatuses(order).length === 0
+                    }
+                    onChange={(event) => {
+                      if (event.target.value) {
+                        updateOrderStatus(
+                          order.id,
+                          event.target.value as OrderStatus
+                        );
+                      }
+                    }}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "6px",
+                      border: "1px solid #cfc5dc",
+                      minWidth: "190px",
+                      background: "white",
+                    }}
+                  >
+                    <option value="">
+                      {updatingOrderId === order.id
+                        ? "Updating..."
+                        : getAvailableOrderStatuses(order).length === 0
+                          ? "No further actions"
+                          : "Change order status"}
+                    </option>
+
+                    {getAvailableOrderStatuses(order).map((status) => (
+                      <option key={status} value={status}>
+                        {status.replaceAll("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <h2 style={{ marginTop: "40px" }}>Manage Products</h2>
 

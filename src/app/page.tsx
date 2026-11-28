@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import {
   Search,
@@ -11,6 +11,10 @@ import {
   ArrowRight,
   Eye,
   Heart,
+  Plus,
+  Minus,
+  Trash2,
+  ShoppingCart,
 } from "lucide-react";
 
 interface Product {
@@ -24,8 +28,16 @@ interface Product {
   stock: number;
 }
 
+interface CartItem {
+  product: Product;
+  quantity: number;
+}
+
+type FulfillmentMethod = "DELIVERY" | "PICKUP";
+
 const API_URL = "http://localhost:3001/products";
 const BACKEND_URL = "http://localhost:3001";
+const ORDERS_API_URL = "http://localhost:3001/orders";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -36,6 +48,24 @@ export default function Home() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Shopping cart
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+
+  // Checkout information
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [fulfillmentMethod, setFulfillmentMethod] =
+    useState<FulfillmentMethod>("DELIVERY");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [customerNote, setCustomerNote] = useState("");
+
+  const [submittingOrder, setSubmittingOrder] = useState(false);
+  const [orderMessage, setOrderMessage] = useState("");
+  const [orderError, setOrderError] = useState(false);
 
   useEffect(() => {
     async function fetchProducts() {
@@ -69,7 +99,17 @@ export default function Home() {
     return matchesCategory && matchesSearch;
   });
 
-  // Convert the backend's relative image path into a complete URL
+  const cartCount = cart.reduce(
+    (total, item) => total + item.quantity,
+    0,
+  );
+
+  const cartTotal = cart.reduce(
+    (total, item) =>
+      total + Number(item.product.price) * item.quantity,
+    0,
+  );
+
   function getProductImageUrl(imageUrl: string | null) {
     if (!imageUrl) {
       return "/placeholder.png";
@@ -80,6 +120,160 @@ export default function Home() {
     }
 
     return `${BACKEND_URL}${imageUrl}`;
+  }
+
+  // Add a product to the cart
+  function addToCart(product: Product) {
+    if (product.stock <= 0) {
+      return;
+    }
+
+    setCart((currentCart) => {
+      const existingItem = currentCart.find(
+        (item) => item.product.id === product.id,
+      );
+
+      if (existingItem) {
+        if (existingItem.quantity >= product.stock) {
+          return currentCart;
+        }
+
+        return currentCart.map((item) =>
+          item.product.id === product.id
+            ? { ...item, quantity: item.quantity + 1, product }
+            : item,
+        );
+      }
+
+      return [...currentCart, { product, quantity: 1 }];
+    });
+
+    setOrderMessage("");
+    setOrderError(false);
+  }
+
+  // Change product quantity
+  function updateCartQuantity(productId: number, change: number) {
+    setCart((currentCart) =>
+      currentCart
+        .map((item) => {
+          if (item.product.id !== productId) {
+            return item;
+          }
+
+          const newQuantity = item.quantity + change;
+
+          if (newQuantity <= 0) {
+            return null;
+          }
+
+          if (newQuantity > item.product.stock) {
+            return item;
+          }
+
+          return { ...item, quantity: newQuantity };
+        })
+        .filter((item): item is CartItem => item !== null),
+    );
+  }
+
+  // Remove a product from the cart
+  function removeFromCart(productId: number) {
+    setCart((currentCart) =>
+      currentCart.filter(
+        (item) => item.product.id !== productId,
+      ),
+    );
+  }
+
+  // Submit customer order to the backend
+  async function handleOrderSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (cart.length === 0) {
+      setOrderError(true);
+      setOrderMessage("Your shopping cart is empty.");
+      return;
+    }
+
+    setSubmittingOrder(true);
+    setOrderMessage("");
+    setOrderError(false);
+
+    const orderData = {
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
+      ...(customerEmail.trim()
+        ? { customerEmail: customerEmail.trim() }
+        : {}),
+      fulfillmentMethod,
+      ...(fulfillmentMethod === "DELIVERY"
+        ? { deliveryAddress: deliveryAddress.trim() }
+        : {}),
+      ...(customerNote.trim()
+        ? { customerNote: customerNote.trim() }
+        : {}),
+      items: cart.map((item) => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+      })),
+    };
+
+    try {
+      const response = await fetch(ORDERS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(orderData),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message = Array.isArray(result?.message)
+          ? result.message.join(", ")
+          : result?.message;
+
+        throw new Error(
+          message || "Unable to place your order. Please try again.",
+        );
+      }
+
+      setCart([]);
+      setCheckoutOpen(false);
+
+      setCustomerName("");
+      setCustomerPhone("");
+      setCustomerEmail("");
+      setDeliveryAddress("");
+      setCustomerNote("");
+      setFulfillmentMethod("DELIVERY");
+
+      setOrderError(false);
+      setOrderMessage(
+        `Your order #${result.id} has been placed successfully! Violette Optic will contact you to confirm your order.`,
+      );
+
+      // Refresh products to get updated stock
+      const productsResponse = await fetch(API_URL);
+
+      if (productsResponse.ok) {
+        const updatedProducts: Product[] =
+          await productsResponse.json();
+
+        setProducts(updatedProducts);
+      }
+    } catch (err) {
+      setOrderError(true);
+      setOrderMessage(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.",
+      );
+    } finally {
+      setSubmittingOrder(false);
+    }
   }
 
   return (
@@ -125,9 +319,19 @@ export default function Home() {
             <Search size={20} />
           </button>
 
-          <a href="#collection" className="icon-button" aria-label="Shop">
+          <button
+            className="icon-button cart-button"
+            aria-label={`Shopping cart, ${cartCount} items`}
+            onClick={() => {
+              setCartOpen(true);
+              setCheckoutOpen(false);
+            }}
+          >
             <ShoppingBag size={20} />
-          </a>
+            {cartCount > 0 && (
+              <span className="cart-count">{cartCount}</span>
+            )}
+          </button>
 
           <a href="/admin" className="admin-link">
             Admin
@@ -276,12 +480,25 @@ export default function Home() {
                 <p>{product.description}</p>
 
                 <div className="product-bottom">
-                  <strong>{product.price} TND</strong>
+                  <strong>
+                    {Number(product.price).toFixed(2)} TND
+                  </strong>
 
                   <span>
-                    View details <ArrowRight size={15} />
+                    {product.stock > 0
+                      ? `${product.stock} available`
+                      : "Out of stock"}
                   </span>
                 </div>
+
+                <button
+                  className="add-cart-button"
+                  disabled={product.stock <= 0}
+                  onClick={() => addToCart(product)}
+                >
+                  <ShoppingCart size={16} />
+                  {product.stock <= 0 ? "Out of stock" : "Add to cart"}
+                </button>
               </div>
             </article>
           ))}
@@ -366,6 +583,281 @@ export default function Home() {
           <a href="/admin">Administration</a>
         </div>
       </footer>
+
+      {/* SHOPPING CART DRAWER */}
+      {cartOpen && (
+        <div
+          className="cart-overlay"
+          onClick={() => setCartOpen(false)}
+        >
+          <div
+            className="cart-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Shopping cart"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="cart-header">
+              <h2>
+                {checkoutOpen ? "Checkout" : "Your shopping bag"}
+              </h2>
+
+              <button
+                className="cart-close"
+                aria-label="Close shopping cart"
+                onClick={() => {
+                  setCartOpen(false);
+                  setCheckoutOpen(false);
+                }}
+              >
+                <X size={23} />
+              </button>
+            </div>
+
+            {orderMessage && (
+              <div
+                className={`order-message ${
+                  orderError ? "order-error" : ""
+                }`}
+              >
+                {orderMessage}
+              </div>
+            )}
+
+            {!checkoutOpen && (
+              <>
+                {cart.length === 0 ? (
+                  <div className="cart-empty">
+                    <ShoppingBag size={40} />
+                    <p>Your shopping bag is empty.</p>
+                    <button
+                      className="checkout-button"
+                      onClick={() => {
+                        setCartOpen(false);
+                        document
+                          .getElementById("collection")
+                          ?.scrollIntoView({ behavior: "smooth" });
+                      }}
+                    >
+                      Explore collection
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="cart-items">
+                      {cart.map((item) => (
+                        <div className="cart-item" key={item.product.id}>
+                          <img
+                            src={getProductImageUrl(item.product.imageUrl)}
+                            alt={item.product.name}
+                          />
+
+                          <div className="cart-item-info">
+                            <h3>{item.product.name}</h3>
+
+                            <p>
+                              {Number(item.product.price).toFixed(2)} TND
+                            </p>
+
+                            <div className="cart-item-actions">
+                              <div className="quantity-control">
+                                <button
+                                  aria-label="Decrease quantity"
+                                  onClick={() =>
+                                    updateCartQuantity(item.product.id, -1)
+                                  }
+                                >
+                                  <Minus size={15} />
+                                </button>
+
+                                <span>{item.quantity}</span>
+
+                                <button
+                                  aria-label="Increase quantity"
+                                  disabled={
+                                    item.quantity >= item.product.stock
+                                  }
+                                  onClick={() =>
+                                    updateCartQuantity(item.product.id, 1)
+                                  }
+                                >
+                                  <Plus size={15} />
+                                </button>
+                              </div>
+
+                              <button
+                                className="remove-cart-item"
+                                aria-label={`Remove ${item.product.name}`}
+                                onClick={() =>
+                                  removeFromCart(item.product.id)
+                                }
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="cart-total">
+                      <span>Total</span>
+                      <strong>{cartTotal.toFixed(2)} TND</strong>
+                    </div>
+
+                    <button
+                      className="checkout-button"
+                      onClick={() => {
+                        setCheckoutOpen(true);
+                        setOrderMessage("");
+                        setOrderError(false);
+                      }}
+                    >
+                      Continue to checkout <ArrowRight size={17} />
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* CHECKOUT FORM */}
+            {checkoutOpen && (
+              <form
+                className="checkout-form"
+                onSubmit={handleOrderSubmit}
+              >
+                <h3>Customer information</h3>
+
+                <label htmlFor="customerName">Full name *</label>
+                <input
+                  id="customerName"
+                  type="text"
+                  required
+                  maxLength={100}
+                  value={customerName}
+                  onChange={(event) =>
+                    setCustomerName(event.target.value)
+                  }
+                  placeholder="Enter your full name"
+                />
+
+                <label htmlFor="customerPhone">Phone number *</label>
+                <input
+                  id="customerPhone"
+                  type="tel"
+                  required
+                  minLength={8}
+                  maxLength={20}
+                  pattern="[+0-9()\- ]{8,20}"
+                  value={customerPhone}
+                  onChange={(event) =>
+                    setCustomerPhone(event.target.value)
+                  }
+                  placeholder="+216 XX XXX XXX"
+                />
+
+                <label htmlFor="customerEmail">
+                  Email address (optional)
+                </label>
+                <input
+                  id="customerEmail"
+                  type="email"
+                  maxLength={191}
+                  value={customerEmail}
+                  onChange={(event) =>
+                    setCustomerEmail(event.target.value)
+                  }
+                  placeholder="your@email.com"
+                />
+
+                <h3>Delivery method</h3>
+
+                <div className="fulfillment-options">
+                  <label>
+                    <input
+                      type="radio"
+                      name="fulfillmentMethod"
+                      value="DELIVERY"
+                      checked={fulfillmentMethod === "DELIVERY"}
+                      onChange={() => setFulfillmentMethod("DELIVERY")}
+                    />
+                    Home delivery
+                  </label>
+
+                  <label>
+                    <input
+                      type="radio"
+                      name="fulfillmentMethod"
+                      value="PICKUP"
+                      checked={fulfillmentMethod === "PICKUP"}
+                      onChange={() => setFulfillmentMethod("PICKUP")}
+                    />
+                    Store pickup
+                  </label>
+                </div>
+
+                {fulfillmentMethod === "DELIVERY" && (
+                  <>
+                    <label htmlFor="deliveryAddress">
+                      Delivery address *
+                    </label>
+                    <textarea
+                      id="deliveryAddress"
+                      required
+                      maxLength={500}
+                      rows={3}
+                      value={deliveryAddress}
+                      onChange={(event) =>
+                        setDeliveryAddress(event.target.value)
+                      }
+                      placeholder="Enter your complete delivery address"
+                    />
+                  </>
+                )}
+
+                <label htmlFor="customerNote">
+                  Additional note (optional)
+                </label>
+                <textarea
+                  id="customerNote"
+                  rows={3}
+                  maxLength={1000}
+                  value={customerNote}
+                  onChange={(event) =>
+                    setCustomerNote(event.target.value)
+                  }
+                  placeholder="Any additional information?"
+                />
+
+                <div className="cart-total">
+                  <span>Order total</span>
+                  <strong>{cartTotal.toFixed(2)} TND</strong>
+                </div>
+
+                <button
+                  type="submit"
+                  className="checkout-button"
+                  disabled={submittingOrder || cart.length === 0}
+                >
+                  {submittingOrder
+                    ? "Placing your order..."
+                    : "Confirm order"}
+                  {!submittingOrder && <ArrowRight size={17} />}
+                </button>
+
+                <button
+                  type="button"
+                  className="checkout-button"
+                  disabled={submittingOrder}
+                  onClick={() => setCheckoutOpen(false)}
+                >
+                  Back to shopping bag
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
